@@ -9,9 +9,9 @@ Set Height 700
 Set Theme "Catppuccin Mocha"
 
 # Start the app in demo mode
-Type "ggoto --demo"
+Type "cargo run --release -- --demo"
 Enter
-Sleep 2s
+Sleep 5s
 
 # Navigate down through servers
 Sleep 500ms
