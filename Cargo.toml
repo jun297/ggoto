@@ -1,0 +1,38 @@
+[package]
+name = "ggoto"
+version = "0.1.0"
+edition = "2021"
+description = "A high-performance TUI for managing SSH connections"
+
+[dependencies]
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# SSH config parsing
+ssh2 = "0.9"
+dirs = "5.0"
+
+# Regex for server grouping
+regex = "1.10"
+
+# Time and duration
+chrono = { version = "0.4", features = ["serde"] }
+
+# Serialization (for potential config)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Clipboard support
+arboard = "3.4"
+
+[profile.release]
+opt-level = 3
+lto = true
