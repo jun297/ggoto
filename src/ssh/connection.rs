@@ -104,6 +104,16 @@ pub async fn run_remote_command(server: &Server, command: &str) -> Result<String
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Remote command failed: {}", stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string());
+
+        // Provide useful error info
+        if !stderr.is_empty() {
+            anyhow::bail!("Remote command failed (exit {}): {}", code, stderr.trim());
+        } else if !stdout.is_empty() {
+            anyhow::bail!("Remote command failed (exit {}): {}", code, stdout.trim());
+        } else {
+            anyhow::bail!("Remote command failed with exit code {}", code);
+        }
     }
 }
