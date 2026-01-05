@@ -142,6 +142,7 @@ command -v dnf >/dev/null 2>&1 && echo "dnf"
 command -v yum >/dev/null 2>&1 && echo "yum"
 command -v pacman >/dev/null 2>&1 && echo "pacman"
 command -v apk >/dev/null 2>&1 && echo "apk"
+true
 "#;
 
     let output = match run_remote_command(server, detect_script).await {
