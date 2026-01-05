@@ -35,6 +35,7 @@
 - **Smart Server Grouping** — Automatically groups servers by naming patterns (e.g., `prod-web-01`, `prod-web-02` → `prod-web`)
 - **Fuzzy Search & Regex Filtering** — Quickly find servers with `/` search supporting regex patterns
 - **SSH Tunneling** — Open and manage SSH tunnels with port ranges (e.g., `8000-8010`)
+- **Mosh Support** — Auto-detect mosh, toggle ssh/mosh mode, with automatic fallback and easy installation
 - **Remote Command Execution** — Run commands on servers without full SSH sessions
 - **Favorites & History** — Mark favorite servers with ★ and track connection history
 - **Multiple Sort Options** — Sort by name, latency, CPU, RAM, favorites, or recent usage
@@ -116,6 +117,8 @@ Use shortcut keys `a-z` and `0-9` to instantly connect to servers (shown next to
 | `s` | Cycle sort order |
 | `r` | Refresh all servers |
 | `R` | Refresh selected server |
+| `m` | Toggle mosh/ssh mode |
+| `M` | Open mosh install menu |
 
 ### Tunnels
 
@@ -171,6 +174,45 @@ Tunnels opened as a range are grouped together in the tunnel view:
 │  :3306         →  db.internal:3306           prod-db-01         │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+## 📡 Mosh Support
+
+ggoto includes built-in [mosh](https://mosh.org/) (mobile shell) support for more resilient connections:
+
+### Features
+
+- **Auto-detection** — If mosh is installed locally, ggoto defaults to mosh mode
+- **Mode toggle** — Press `m` to switch between `[MOSH]` and `[SSH]` modes (shown in status bar)
+- **Auto-fallback** — If mosh fails (e.g., mosh-server not installed), automatically falls back to SSH
+- **Server availability** — Health checks detect mosh-server on remotes (shown as `M` indicator)
+- **Easy installation** — Press `M` to open install menu
+
+### Install Menu (`M`)
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Install Mosh                                       │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  ▸ [1] Install mosh locally                         │
+│    [2] Install on prod-web-01                       │
+│    [3] Install on all servers                       │
+│    [4] Show install instructions                    │
+│                                                     │
+│  j/k: navigate  Enter: select  Esc: cancel          │
+└─────────────────────────────────────────────────────┘
+```
+
+- **Install locally** — Auto-detects package manager (brew/apt/dnf/yum/pacman/apk)
+- **Install on server** — Installs mosh-server on the selected remote (requires sudo)
+- **Install on all** — Batch install on servers that don't have mosh-server
+- **Instructions** — Shows manual install commands for all platforms
+
+### Requirements
+
+- Local: `mosh` client installed
+- Remote: `mosh-server` installed, UDP ports 60000-61000 open
+- Note: Remote install requires passwordless sudo or manual installation
 
 ## 📊 Sort Orders
 
@@ -239,6 +281,7 @@ ggoto collects real-time metrics from each server (max 5 concurrent checks):
 | Load Average | `uptime` |
 | GPU Usage | `nvidia-smi` / `rocm-smi` |
 | Logged-in Users | `who` command |
+| Mosh Available | `which mosh-server` |
 
 ### Latency Color Coding
 
@@ -261,7 +304,8 @@ src/
 ├── ssh/
 │   ├── mod.rs
 │   ├── config.rs     # SSH config parsing
-│   └── connection.rs # SSH session management
+│   ├── connection.rs # SSH session management
+│   └── mosh.rs       # Mosh detection, launch, and install
 └── tui/
     ├── mod.rs
     ├── ui.rs         # UI rendering
@@ -293,6 +337,7 @@ cargo build --release
 ## 🗺️ Roadmap
 
 - [x] GPU monitoring (NVIDIA/AMD)
+- [x] Mosh support with auto-detection and install
 - [ ] Custom health check commands
 - [ ] Server tags and custom grouping
 - [ ] Connection multiplexing
