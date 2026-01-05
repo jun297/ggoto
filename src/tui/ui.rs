@@ -245,7 +245,7 @@ fn draw_server_list(frame: &mut Frame, app: &App, area: Rect) {
 
             // Mosh indicator: M if server has mosh-server
             let mosh_indicator = server.metrics.as_ref()
-                .map(|m| if m.has_mosh { "M" } else { " " })
+                .map(|m| if m.mosh_server_path.is_some() { "M" } else { " " })
                 .unwrap_or(" ");
 
             // Get last connection time
@@ -404,7 +404,7 @@ fn draw_server_details(frame: &mut Frame, app: &App, area: Rect) {
 
     // Add mosh availability if we have metrics
     let mosh_line = server.metrics.as_ref().map(|m| {
-        let (mosh_str, mosh_color) = if m.has_mosh {
+        let (mosh_str, mosh_color) = if m.mosh_server_path.is_some() {
             ("Available", Color::Green)
         } else {
             ("Not installed", Color::DarkGray)

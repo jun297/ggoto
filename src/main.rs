@@ -472,7 +472,7 @@ async fn main() -> Result<()> {
                                 app.set_status("Demo mode: Install disabled".to_string());
                             } else {
                                 let servers: Vec<_> = app.servers.iter()
-                                    .filter(|s| s.metrics.as_ref().map(|m| !m.has_mosh).unwrap_or(true))
+                                    .filter(|s| s.metrics.as_ref().map(|m| m.mosh_server_path.is_none()).unwrap_or(true))
                                     .cloned()
                                     .collect();
 

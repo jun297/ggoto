@@ -68,7 +68,26 @@ nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=cs
         format!(
             r#"{}
 echo "===MOSH==="
-which mosh-server >/dev/null 2>&1 && echo "yes" || echo "no"
+# Check PATH first, then common conda/brew locations
+if command -v mosh-server >/dev/null 2>&1; then
+    command -v mosh-server
+elif [ -x "$HOME/miniconda3/bin/mosh-server" ]; then
+    echo "$HOME/miniconda3/bin/mosh-server"
+elif [ -x "$HOME/anaconda3/bin/mosh-server" ]; then
+    echo "$HOME/anaconda3/bin/mosh-server"
+elif [ -x "$HOME/miniforge3/bin/mosh-server" ]; then
+    echo "$HOME/miniforge3/bin/mosh-server"
+elif [ -x "$HOME/mambaforge/bin/mosh-server" ]; then
+    echo "$HOME/mambaforge/bin/mosh-server"
+elif [ -x "$HOME/.local/bin/mosh-server" ]; then
+    echo "$HOME/.local/bin/mosh-server"
+elif [ -x "/opt/homebrew/bin/mosh-server" ]; then
+    echo "/opt/homebrew/bin/mosh-server"
+elif [ -x "/usr/local/bin/mosh-server" ]; then
+    echo "/usr/local/bin/mosh-server"
+else
+    echo ""
+fi
 "#,
             base_script
         )
@@ -141,7 +160,9 @@ fn parse_metrics_output(output: &str) -> Result<SystemMetrics> {
                 }
             }
             "MOSH" => {
-                metrics.has_mosh = line == "yes";
+                if !line.is_empty() {
+                    metrics.mosh_server_path = Some(line.to_string());
+                }
             }
             _ => {}
         }

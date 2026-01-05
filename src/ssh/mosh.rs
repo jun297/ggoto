@@ -279,6 +279,23 @@ pub fn launch_mosh_session(server: &Server) -> Result<()> {
         args.push(format!("ssh {}", ssh_opts.join(" ")));
     }
 
+    // If we know the mosh-server path (e.g., in conda), use --server flag
+    // This is needed when mosh-server is not in the default PATH
+    if let Some(ref metrics) = server.metrics {
+        if let Some(ref mosh_path) = metrics.mosh_server_path {
+            // Add --server for non-standard paths (conda, user installs, etc.)
+            if mosh_path.contains("/miniconda")
+                || mosh_path.contains("/anaconda")
+                || mosh_path.contains("/miniforge")
+                || mosh_path.contains("/mambaforge")
+                || mosh_path.contains("/.local/")
+                || mosh_path.contains("/.conda/")
+            {
+                args.push(format!("--server={}", mosh_path));
+            }
+        }
+    }
+
     // Build user@host or just host
     let target = if let Some(ref user) = server.user {
         format!("{}@{}", user, server.host)
