@@ -25,7 +25,7 @@ use app::{App, SortOrder, ViewMode};
 use health::{spawn_all_health_checks, spawn_health_check, HealthUpdate};
 use history::History;
 use server::generate_demo_servers;
-use ssh::{build_groups, group_servers, launch_ssh_session, parse_ssh_config, run_remote_command};
+use ssh::{build_groups, group_servers, launch_mosh_session, launch_ssh_session, parse_ssh_config, run_remote_command};
 use tui::{draw, handle_key_event, poll_event, HandleResult};
 
 fn print_help() {
@@ -435,6 +435,70 @@ async fn main() -> Result<()> {
                                 app.selected_tunnel = 0;
                             }
                         }
+                        HandleResult::InstallMoshLocally => {
+                            app.set_status("Installing mosh locally...".to_string());
+                            let (success, msg) = ssh::install_mosh_locally();
+                            if success {
+                                app.use_mosh = true; // Enable mosh now that it's installed
+                            }
+                            app.set_status(msg);
+                        }
+                        HandleResult::InstallMoshOnServer(idx) => {
+                            if demo_mode {
+                                app.set_status("Demo mode: Install disabled".to_string());
+                            } else if idx < app.servers.len() {
+                                let server = app.servers[idx].clone();
+                                let server_host = server.host.clone();
+                                let tx = cmd_tx.clone();
+                                app.set_status(format!("Installing mosh on {}...", server_host));
+
+                                tokio::spawn(async move {
+                                    let (success, msg) = ssh::install_mosh_remotely(&server).await;
+                                    let result_msg = if success {
+                                        format!("✓ {}", msg)
+                                    } else {
+                                        format!("✗ {}", msg)
+                                    };
+                                    let _ = tx.send(Ok(result_msg));
+                                });
+
+                                app.command_server = Some(format!("mosh install on {}", server_host));
+                                app.is_running_command = true;
+                                app.view_mode = ViewMode::CommandOutput;
+                            }
+                        }
+                        HandleResult::InstallMoshOnAllServers => {
+                            if demo_mode {
+                                app.set_status("Demo mode: Install disabled".to_string());
+                            } else {
+                                let servers: Vec<_> = app.servers.iter()
+                                    .filter(|s| s.metrics.as_ref().map(|m| !m.has_mosh).unwrap_or(true))
+                                    .cloned()
+                                    .collect();
+
+                                if servers.is_empty() {
+                                    app.set_status("All servers already have mosh installed".to_string());
+                                } else {
+                                    let tx = cmd_tx.clone();
+                                    let count = servers.len();
+                                    app.set_status(format!("Installing mosh on {} servers...", count));
+
+                                    tokio::spawn(async move {
+                                        let mut results = Vec::new();
+                                        for server in servers {
+                                            let (success, msg) = ssh::install_mosh_remotely(&server).await;
+                                            let symbol = if success { "✓" } else { "✗" };
+                                            results.push(format!("{} {}: {}", symbol, server.host, msg));
+                                        }
+                                        let _ = tx.send(Ok(results.join("\n")));
+                                    });
+
+                                    app.command_server = Some("mosh install on all servers".to_string());
+                                    app.is_running_command = true;
+                                    app.view_mode = ViewMode::CommandOutput;
+                                }
+                            }
+                        }
                     }
                 }
                 Event::Resize(_, _) => {
@@ -463,7 +527,7 @@ async fn main() -> Result<()> {
     // Handle the result
     result?;
 
-    // Launch SSH if requested
+    // Launch SSH/Mosh if requested
     if let Some(idx) = ssh_target {
         if idx < app.servers.len() {
             let server = &app.servers[idx];
@@ -474,8 +538,18 @@ async fn main() -> Result<()> {
                 eprintln!("Warning: Failed to save history: {}", e);
             }
 
-            println!("Connecting to {}...", server.host);
-            launch_ssh_session(server)?;
+            if app.use_mosh {
+                println!("Connecting to {} via mosh...", server.host);
+                if let Err(e) = launch_mosh_session(server) {
+                    eprintln!("Mosh failed: {}", e);
+                    eprintln!("Falling back to SSH...");
+                    println!("Connecting to {}...", server.host);
+                    launch_ssh_session(server)?;
+                }
+            } else {
+                println!("Connecting to {}...", server.host);
+                launch_ssh_session(server)?;
+            }
         }
     }
 

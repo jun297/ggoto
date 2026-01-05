@@ -73,6 +73,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if app.is_entering_tunnel {
         draw_tunnel_input(frame, app);
     }
+
+    // Draw install menu overlay if active
+    if app.is_showing_install_menu {
+        draw_install_menu(frame, app);
+    }
 }
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
@@ -158,7 +163,7 @@ fn draw_server_list(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw("  "),  // Space for star
         Span::styled(format!("{:<13}", "Host"), hdr),
         Span::styled(format!("{:>8}", "Ping"), hdr),
-        Span::raw("  "),
+        Span::raw(" "),   // Space for mosh indicator
         Span::styled(format!("{:<14}", "CPU"), hdr),
         Span::styled(format!("{:<13}", "RAM"), hdr),
         Span::styled(format!("{:<18}", "GPU"), hdr),
@@ -238,6 +243,11 @@ fn draw_server_list(frame: &mut Frame, app: &App, area: Rect) {
                 .map(|m| format!("{}", m.logged_in_users.len()))
                 .unwrap_or_else(|| "-".to_string());
 
+            // Mosh indicator: M if server has mosh-server
+            let mosh_indicator = server.metrics.as_ref()
+                .map(|m| if m.has_mosh { "M" } else { " " })
+                .unwrap_or(" ");
+
             // Get last connection time
             let last_str = app.history.format_last_connected(&server.host);
 
@@ -260,7 +270,7 @@ fn draw_server_list(frame: &mut Frame, app: &App, area: Rect) {
                 Span::styled(format!(" {}", fav_indicator), Style::default().fg(Color::Yellow)),
                 Span::styled(format!("{:<13}", server.host), Style::default().fg(Color::White)),
                 Span::styled(format!("{:>8}", latency_str), Style::default().fg(latency_color)),
-                Span::raw("  "),
+                Span::styled(mosh_indicator, Style::default().fg(Color::Magenta)),
                 Span::raw(format!("{:<14}", cpu_str)),
                 Span::raw(format!("{:<13}", ram_str)),
                 Span::styled(format!("{:<18}", gpu_str), Style::default().fg(gpu_color)),
@@ -392,10 +402,28 @@ fn draw_server_details(frame: &mut Frame, app: &App, area: Rect) {
         ]),
     ];
 
+    // Add mosh availability if we have metrics
+    let mosh_line = server.metrics.as_ref().map(|m| {
+        let (mosh_str, mosh_color) = if m.has_mosh {
+            ("Available", Color::Green)
+        } else {
+            ("Not installed", Color::DarkGray)
+        };
+        Line::from(vec![
+            Span::raw("Mosh:     "),
+            Span::styled(mosh_str, Style::default().fg(mosh_color)),
+        ])
+    });
+
+    let mut all_lines = info_lines;
+    if let Some(line) = mosh_line {
+        all_lines.push(line);
+    }
+
     let info_block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" {} ", server.host));
-    frame.render_widget(Paragraph::new(info_lines).block(info_block), chunks[0]);
+    frame.render_widget(Paragraph::new(all_lines).block(info_block), chunks[0]);
 
     // System metrics
     if let Some(ref metrics) = server.metrics {
@@ -512,6 +540,8 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("  s         Cycle sort order"),
         Line::from("  r         Refresh all servers"),
         Line::from("  R         Refresh selected server"),
+        Line::from("  m         Toggle mosh/ssh mode"),
+        Line::from("  M         Mosh install menu"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "Tunnels",
@@ -556,9 +586,18 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(paragraph, area);
     } else {
         // Show styled key hints based on view mode
+        let mosh_indicator = if app.use_mosh {
+            Span::styled("[MOSH]", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled("[SSH]", Style::default().fg(Color::Cyan))
+        };
+
         let hints = match app.view_mode {
             ViewMode::ServerList => Line::from(vec![
-                Span::styled(" ?", Style::default().fg(Color::Yellow)),
+                Span::raw(" "),
+                mosh_indicator,
+                Span::raw("  "),
+                Span::styled("?", Style::default().fg(Color::Yellow)),
                 Span::raw(":help  "),
                 Span::styled("/", Style::default().fg(Color::Yellow)),
                 Span::raw(":filter  "),
@@ -568,10 +607,8 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw(":cmd  "),
                 Span::styled("t", Style::default().fg(Color::Yellow)),
                 Span::raw(":tunnel  "),
-                Span::styled("f", Style::default().fg(Color::Yellow)),
-                Span::raw(":fav  "),
-                Span::styled("s", Style::default().fg(Color::Yellow)),
-                Span::raw(":sort  "),
+                Span::styled("m", Style::default().fg(Color::Yellow)),
+                Span::raw(":mosh  "),
                 Span::styled("q", Style::default().fg(Color::Yellow)),
                 Span::raw(":quit"),
             ]),
@@ -934,4 +971,72 @@ fn gauge_color(percent: f32) -> Color {
     } else {
         Color::Red
     }
+}
+
+fn draw_install_menu(frame: &mut Frame, app: &App) {
+    let area = constrained_rect(frame.area(), MAX_WIDTH);
+    let popup_width = 50;
+    let popup_height = 10;
+
+    let popup_area = Rect {
+        x: area.x + (area.width.saturating_sub(popup_width)) / 2,
+        y: area.y + (area.height.saturating_sub(popup_height)) / 2,
+        width: popup_width.min(area.width),
+        height: popup_height.min(area.height),
+    };
+
+    frame.render_widget(Clear, popup_area);
+
+    // Get selected server name for the menu
+    let server_name = app
+        .selected_server()
+        .map(|s| s.host.as_str())
+        .unwrap_or("(none)");
+
+    let menu_items = [
+        ("1", "Install mosh locally"),
+        ("2", &format!("Install on {}", server_name)),
+        ("3", "Install on all servers"),
+        ("4", "Show install instructions"),
+    ];
+
+    let items: Vec<Line> = menu_items
+        .iter()
+        .enumerate()
+        .map(|(i, (key, label))| {
+            let is_selected = i == app.install_menu_selection;
+            let prefix = if is_selected { "▸ " } else { "  " };
+            let style = if is_selected {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(format!("[{}] ", key), Style::default().fg(Color::Yellow)),
+                Span::styled(*label, style),
+            ])
+        })
+        .collect();
+
+    let mut lines = vec![
+        Line::from(""),
+    ];
+    lines.extend(items);
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("  j/k", Style::default().fg(Color::DarkGray)),
+        Span::raw(": navigate  "),
+        Span::styled("Enter", Style::default().fg(Color::DarkGray)),
+        Span::raw(": select  "),
+        Span::styled("Esc", Style::default().fg(Color::DarkGray)),
+        Span::raw(": cancel"),
+    ]));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Install Mosh ")
+        .style(Style::default().fg(Color::Magenta));
+
+    frame.render_widget(Paragraph::new(lines).block(block), popup_area);
 }

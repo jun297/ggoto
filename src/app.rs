@@ -2,6 +2,7 @@ use regex::Regex;
 
 use crate::history::History;
 use crate::server::{Server, ServerGroup};
+use crate::ssh::is_mosh_installed;
 use crate::tunnel::TunnelManager;
 
 /// View mode for the TUI
@@ -90,6 +91,10 @@ pub struct App {
     pub is_entering_tunnel: bool,
     pub tunnel_input: String,  // Format: "remote_host:remote_port" or just "port"
     pub selected_tunnel: usize,
+    // Mosh support
+    pub use_mosh: bool,
+    pub is_showing_install_menu: bool,
+    pub install_menu_selection: usize,
 }
 
 impl App {
@@ -121,7 +126,15 @@ impl App {
             is_entering_tunnel: false,
             tunnel_input: String::new(),
             selected_tunnel: 0,
+            use_mosh: is_mosh_installed(),
+            is_showing_install_menu: false,
+            install_menu_selection: 0,
         }
+    }
+
+    /// Toggle mosh mode
+    pub fn toggle_mosh(&mut self) {
+        self.use_mosh = !self.use_mosh;
     }
 
     /// Set a status message with auto-clear timeout

@@ -32,6 +32,7 @@ pub struct SystemMetrics {
     pub gpus: Vec<GpuInfo>,
     pub logged_in_users: Vec<String>,
     pub load_average: (f32, f32, f32),
+    pub has_mosh: bool,
 }
 
 impl SystemMetrics {
@@ -146,6 +147,7 @@ pub fn generate_demo_servers() -> Vec<Server> {
                 gpus: vec![],
                 logged_in_users: vec!["user".to_string()],
                 load_average: (cpu / 25.0, cpu / 30.0, cpu / 35.0),
+                has_mosh: true, // Demo servers have mosh
             });
             server.last_check = Some(std::time::Instant::now());
             server

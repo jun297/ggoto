@@ -4,6 +4,7 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, ViewMode};
+use crate::ssh::get_install_instructions;
 use crate::tunnel::TunnelDisplayItem;
 
 /// Poll for terminal events with timeout
@@ -40,6 +41,11 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> HandleResult {
     // Handle tunnel input mode
     if app.is_entering_tunnel {
         return handle_tunnel_input(app, key);
+    }
+
+    // Handle install menu
+    if app.is_showing_install_menu {
+        return handle_install_menu_input(app, key);
     }
 
     // Global shortcuts
@@ -92,6 +98,9 @@ pub enum HandleResult {
     CloseTunnel(u16),          // Local port to close
     CloseTunnelGroup(u32),     // Group ID to close
     CloseAllTunnels,
+    InstallMoshLocally,
+    InstallMoshOnServer(usize),  // Server index
+    InstallMoshOnAllServers,
 }
 
 fn handle_filter_input(app: &mut App, key: KeyEvent) -> HandleResult {
@@ -191,7 +200,18 @@ fn handle_server_list_input(app: &mut App, key: KeyEvent) -> HandleResult {
             app.view_mode = ViewMode::Tunnels;
             app.selected_tunnel = 0;
         }
-        KeyCode::Char(ch) if ch.is_ascii_lowercase() && ch != 's' && ch != 'j' && ch != 'k' && ch != 'n' && ch != 'q' && ch != 'r' && ch != 'd' && ch != 'g' && ch != 'f' && ch != 'c' && ch != 't' => {
+        KeyCode::Char('m') => {
+            // Toggle mosh mode
+            app.toggle_mosh();
+            let mode = if app.use_mosh { "mosh" } else { "ssh" };
+            app.set_status(format!("Connection mode: {}", mode));
+        }
+        KeyCode::Char('M') => {
+            // Show mosh install menu
+            app.is_showing_install_menu = true;
+            app.install_menu_selection = 0;
+        }
+        KeyCode::Char(ch) if ch.is_ascii_lowercase() && ch != 's' && ch != 'j' && ch != 'k' && ch != 'n' && ch != 'q' && ch != 'r' && ch != 'd' && ch != 'g' && ch != 'f' && ch != 'c' && ch != 't' && ch != 'm' => {
             // Shortcut keys a-z (excluding reserved keys) to jump to server
             let idx = (ch as u8 - b'a') as usize;
             let display_order = app.display_order_servers();
@@ -456,6 +476,74 @@ fn handle_tunnels_input(app: &mut App, key: KeyEvent) -> HandleResult {
             // Open new tunnel (go back to server list)
             app.view_mode = ViewMode::ServerList;
             app.start_tunnel_input();
+        }
+        _ => {}
+    }
+    HandleResult::Continue
+}
+
+fn handle_install_menu_input(app: &mut App, key: KeyEvent) -> HandleResult {
+    // Menu options:
+    // 0: Install locally
+    // 1: Install on selected server
+    // 2: Install on all servers
+    // 3: Show install instructions
+    const MENU_ITEMS: usize = 4;
+
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.is_showing_install_menu = false;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.install_menu_selection > 0 {
+                app.install_menu_selection -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.install_menu_selection < MENU_ITEMS - 1 {
+                app.install_menu_selection += 1;
+            }
+        }
+        KeyCode::Enter => {
+            app.is_showing_install_menu = false;
+            match app.install_menu_selection {
+                0 => return HandleResult::InstallMoshLocally,
+                1 => {
+                    let display_order = app.display_order_servers();
+                    if let Some(&idx) = display_order.get(app.selected_index) {
+                        return HandleResult::InstallMoshOnServer(idx);
+                    }
+                }
+                2 => return HandleResult::InstallMoshOnAllServers,
+                3 => {
+                    // Show install instructions
+                    app.command_output = Some(get_install_instructions());
+                    app.command_server = Some("mosh install instructions".to_string());
+                    app.view_mode = ViewMode::CommandOutput;
+                }
+                _ => {}
+            }
+        }
+        KeyCode::Char('1') => {
+            app.is_showing_install_menu = false;
+            return HandleResult::InstallMoshLocally;
+        }
+        KeyCode::Char('2') => {
+            app.is_showing_install_menu = false;
+            let display_order = app.display_order_servers();
+            if let Some(&idx) = display_order.get(app.selected_index) {
+                return HandleResult::InstallMoshOnServer(idx);
+            }
+        }
+        KeyCode::Char('3') => {
+            app.is_showing_install_menu = false;
+            return HandleResult::InstallMoshOnAllServers;
+        }
+        KeyCode::Char('4') => {
+            app.is_showing_install_menu = false;
+            app.command_output = Some(get_install_instructions());
+            app.command_server = Some("mosh install instructions".to_string());
+            app.view_mode = ViewMode::CommandOutput;
         }
         _ => {}
     }

@@ -6,6 +6,7 @@ use tokio::sync::{mpsc, Semaphore};
 
 use crate::server::{GpuInfo, HealthStatus, Server, SystemMetrics};
 use crate::ssh::connection::run_remote_command;
+use crate::ssh::mosh::is_mosh_installed;
 
 /// Maximum concurrent health check connections
 const MAX_CONCURRENT_CHECKS: usize = 5;
@@ -36,7 +37,7 @@ pub async fn check_latency(server: &Server) -> Option<Duration> {
 /// Fetch system metrics from a server
 pub async fn fetch_metrics(server: &Server) -> Result<SystemMetrics> {
     // Combined command to fetch all metrics at once
-    let script = r#"
+    let base_script = r#"
 echo "===CORES==="
 nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "0"
 
@@ -62,7 +63,20 @@ nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=cs
     echo ""
 "#;
 
-    let output = run_remote_command(server, script).await?;
+    // Only check for mosh-server if mosh is installed locally
+    let script = if is_mosh_installed() {
+        format!(
+            r#"{}
+echo "===MOSH==="
+which mosh-server >/dev/null 2>&1 && echo "yes" || echo "no"
+"#,
+            base_script
+        )
+    } else {
+        base_script.to_string()
+    };
+
+    let output = run_remote_command(server, &script).await?;
     parse_metrics_output(&output)
 }
 
@@ -125,6 +139,9 @@ fn parse_metrics_output(output: &str) -> Result<SystemMetrics> {
                         });
                     }
                 }
+            }
+            "MOSH" => {
+                metrics.has_mosh = line == "yes";
             }
             _ => {}
         }
