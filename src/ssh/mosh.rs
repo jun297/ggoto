@@ -130,11 +130,23 @@ pub async fn install_mosh_remotely(server: &Server) -> (bool, String) {
     use crate::ssh::run_remote_command;
 
     // Detect ALL available package managers
+    // Note: Non-interactive SSH doesn't source .bashrc, so check common paths directly
     let detect_script = r#"
 echo "user:"
 command -v brew >/dev/null 2>&1 && echo "brew"
-command -v conda >/dev/null 2>&1 && echo "conda"
-command -v mamba >/dev/null 2>&1 && echo "mamba"
+# Check conda in PATH and common locations
+if command -v conda >/dev/null 2>&1; then echo "conda"
+elif [ -x "$HOME/miniconda3/bin/conda" ]; then echo "conda:$HOME/miniconda3/bin/conda"
+elif [ -x "$HOME/anaconda3/bin/conda" ]; then echo "conda:$HOME/anaconda3/bin/conda"
+elif [ -x "$HOME/miniforge3/bin/conda" ]; then echo "conda:$HOME/miniforge3/bin/conda"
+elif [ -x "$HOME/.conda/bin/conda" ]; then echo "conda:$HOME/.conda/bin/conda"
+elif [ -x "/opt/conda/bin/conda" ]; then echo "conda:/opt/conda/bin/conda"
+fi
+# Check mamba
+if command -v mamba >/dev/null 2>&1; then echo "mamba"
+elif [ -x "$HOME/miniforge3/bin/mamba" ]; then echo "mamba:$HOME/miniforge3/bin/mamba"
+elif [ -x "$HOME/mambaforge/bin/mamba" ]; then echo "mamba:$HOME/mambaforge/bin/mamba"
+fi
 command -v nix-env >/dev/null 2>&1 && echo "nix"
 echo "system:"
 command -v apt >/dev/null 2>&1 && echo "apt"
@@ -175,19 +187,29 @@ true
 
     // Try user-space package managers first (no sudo needed)
     for pm in &user_space {
-        let install_cmd = match *pm {
-            "brew" => "brew install mosh",
-            "conda" => "conda install -y -c conda-forge mosh",
-            "mamba" => "mamba install -y -c conda-forge mosh",
-            "nix" => "nix-env -iA nixpkgs.mosh",
-            _ => continue,
+        // Handle "conda:/path/to/conda" format
+        let (pm_name, install_cmd) = if pm.starts_with("conda:") {
+            let path = &pm[6..]; // Skip "conda:"
+            ("conda", format!("{} install -y -c conda-forge mosh", path))
+        } else if pm.starts_with("mamba:") {
+            let path = &pm[6..]; // Skip "mamba:"
+            ("mamba", format!("{} install -y -c conda-forge mosh", path))
+        } else {
+            let cmd = match *pm {
+                "brew" => "brew install mosh",
+                "conda" => "conda install -y -c conda-forge mosh",
+                "mamba" => "mamba install -y -c conda-forge mosh",
+                "nix" => "nix-env -iA nixpkgs.mosh",
+                _ => continue,
+            };
+            (*pm, cmd.to_string())
         };
 
-        match run_remote_command(server, install_cmd).await {
+        match run_remote_command(server, &install_cmd).await {
             Ok(_) => {
                 // Verify installation
                 if run_remote_command(server, "which mosh-server").await.is_ok() {
-                    return (true, format!("Successfully installed mosh via {} on {}", pm, server.host));
+                    return (true, format!("Successfully installed mosh via {} on {}", pm_name, server.host));
                 }
             }
             Err(_) => continue, // Try next package manager
