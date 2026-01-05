@@ -129,73 +129,109 @@ pub fn install_mosh_locally() -> (bool, String) {
 pub async fn install_mosh_remotely(server: &Server) -> (bool, String) {
     use crate::ssh::run_remote_command;
 
-    // First detect available package managers (prefer user-space options)
+    // Detect ALL available package managers
     let detect_script = r#"
-if command -v brew >/dev/null 2>&1; then echo "brew"
-elif command -v conda >/dev/null 2>&1; then echo "conda"
-elif command -v mamba >/dev/null 2>&1; then echo "mamba"
-elif command -v nix-env >/dev/null 2>&1; then echo "nix"
-elif command -v apt >/dev/null 2>&1; then echo "apt"
-elif command -v dnf >/dev/null 2>&1; then echo "dnf"
-elif command -v yum >/dev/null 2>&1; then echo "yum"
-elif command -v pacman >/dev/null 2>&1; then echo "pacman"
-elif command -v apk >/dev/null 2>&1; then echo "apk"
-else echo "unknown"
-fi
+echo "user:"
+command -v brew >/dev/null 2>&1 && echo "brew"
+command -v conda >/dev/null 2>&1 && echo "conda"
+command -v mamba >/dev/null 2>&1 && echo "mamba"
+command -v nix-env >/dev/null 2>&1 && echo "nix"
+echo "system:"
+command -v apt >/dev/null 2>&1 && echo "apt"
+command -v dnf >/dev/null 2>&1 && echo "dnf"
+command -v yum >/dev/null 2>&1 && echo "yum"
+command -v pacman >/dev/null 2>&1 && echo "pacman"
+command -v apk >/dev/null 2>&1 && echo "apk"
 "#;
 
-    let pkg_manager = match run_remote_command(server, detect_script).await {
-        Ok(output) => output.trim().to_string(),
+    let output = match run_remote_command(server, detect_script).await {
+        Ok(o) => o,
         Err(e) => return (false, format!("Failed to detect package manager: {}", e)),
     };
 
-    if pkg_manager == "unknown" {
-        return (false, "No supported package manager found. Try: brew, conda, or build from source".to_string());
-    }
+    // Parse available package managers
+    let mut user_space: Vec<&str> = Vec::new();
+    let mut system: Vec<&str> = Vec::new();
+    let mut in_user = false;
+    let mut in_system = false;
 
-    // Build install command - prefer user-space package managers (no sudo needed)
-    let install_cmd = match pkg_manager.as_str() {
-        // User-space package managers (no sudo required)
-        "brew" => "brew install mosh".to_string(),
-        "conda" => "conda install -y -c conda-forge mosh".to_string(),
-        "mamba" => "mamba install -y -c conda-forge mosh".to_string(),
-        "nix" => "nix-env -iA nixpkgs.mosh".to_string(),
-        // System package managers (try sudo, provide alternatives if fails)
-        "apt" | "dnf" | "yum" | "pacman" | "apk" => {
-            let cmd = match pkg_manager.as_str() {
-                "apt" => "apt install -y mosh",
-                "dnf" => "dnf install -y mosh",
-                "yum" => "yum install -y mosh",
-                "pacman" => "pacman -S --noconfirm mosh",
-                "apk" => "apk add mosh",
-                _ => unreachable!(),
-            };
-            format!("sudo -n {} 2>/dev/null || echo 'SUDO_REQUIRED'", cmd)
-        }
-        _ => return (false, "Unknown package manager".to_string()),
-    };
-
-    match run_remote_command(server, &install_cmd).await {
-        Ok(output) => {
-            if output.contains("SUDO_REQUIRED") {
-                (false, format!(
-                    "No sudo access. Alternatives:\n  \
-                     • Install Linuxbrew: brew install mosh\n  \
-                     • Use conda: conda install -c conda-forge mosh\n  \
-                     • Or run: ssh {} 'sudo {} install mosh'",
-                    server.host,
-                    if pkg_manager == "apt" { "apt" } else { &pkg_manager }
-                ))
-            } else {
-                // Verify installation
-                match run_remote_command(server, "which mosh-server").await {
-                    Ok(_) => (true, format!("Successfully installed mosh on {}", server.host)),
-                    Err(_) => (false, "Install command ran but mosh-server not found".to_string()),
-                }
+    for line in output.lines() {
+        let line = line.trim();
+        if line == "user:" {
+            in_user = true;
+            in_system = false;
+        } else if line == "system:" {
+            in_user = false;
+            in_system = true;
+        } else if !line.is_empty() {
+            if in_user {
+                user_space.push(line);
+            } else if in_system {
+                system.push(line);
             }
         }
-        Err(e) => (false, format!("Install failed: {}", e)),
     }
+
+    // Try user-space package managers first (no sudo needed)
+    for pm in &user_space {
+        let install_cmd = match *pm {
+            "brew" => "brew install mosh",
+            "conda" => "conda install -y -c conda-forge mosh",
+            "mamba" => "mamba install -y -c conda-forge mosh",
+            "nix" => "nix-env -iA nixpkgs.mosh",
+            _ => continue,
+        };
+
+        match run_remote_command(server, install_cmd).await {
+            Ok(_) => {
+                // Verify installation
+                if run_remote_command(server, "which mosh-server").await.is_ok() {
+                    return (true, format!("Successfully installed mosh via {} on {}", pm, server.host));
+                }
+            }
+            Err(_) => continue, // Try next package manager
+        }
+    }
+
+    // Try system package managers with sudo
+    for pm in &system {
+        let cmd = match *pm {
+            "apt" => "apt install -y mosh",
+            "dnf" => "dnf install -y mosh",
+            "yum" => "yum install -y mosh",
+            "pacman" => "pacman -S --noconfirm mosh",
+            "apk" => "apk add mosh",
+            _ => continue,
+        };
+
+        let install_cmd = format!("sudo -n {} 2>&1", cmd);
+        match run_remote_command(server, &install_cmd).await {
+            Ok(output) => {
+                if !output.contains("sudo:") && !output.contains("permission denied") {
+                    // Verify installation
+                    if run_remote_command(server, "which mosh-server").await.is_ok() {
+                        return (true, format!("Successfully installed mosh via {} on {}", pm, server.host));
+                    }
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+
+    // All methods failed
+    let suggestions = if !system.is_empty() {
+        format!(
+            "No install method worked. Try manually:\n  \
+             • ssh {} 'sudo {} install mosh'\n  \
+             • Or install conda/brew first",
+            server.host,
+            system[0]
+        )
+    } else {
+        "No supported package manager found. Install brew or conda first.".to_string()
+    };
+
+    (false, suggestions)
 }
 
 /// Launch a mosh session to the given server
